@@ -1,0 +1,19 @@
+{
+  "name": "asas-careers-app",
+  "version": "1.0.0",
+  "description": "ASAS Global Aluminum Extrusion — employment application system with real database and file storage",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
