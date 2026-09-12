@@ -10,7 +10,12 @@ const { checkPassword, issueToken, requireAuth } = require('./lib/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const UPLOAD_ROOT = path.join(__dirname, 'uploads');
+// Uploaded files live INSIDE the data folder (not a separate top-level
+// folder). This matters for deployment: hosts that only give you one
+// persistent volume (e.g. Railway's free/trial tier) can mount it at
+// /app/data and this one mount covers both the database AND every
+// candidate's files — no second volume needed.
+const UPLOAD_ROOT = path.join(__dirname, 'data', 'uploads');
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -124,6 +129,7 @@ app.post(
       });
 
       res.json({ ok: true, ref: record.ref });
+      refreshExportSnapshot();
     } catch (err) {
       console.error(err);
       // best-effort cleanup of any partially-uploaded files
@@ -176,6 +182,7 @@ app.patch('/api/admin/applications/:ref', requireAuth, async (req, res) => {
   });
   if (result.error) return res.status(404).json(result);
   res.json(result.app);
+  refreshExportSnapshot();
 });
 
 app.delete('/api/admin/applications/:ref', requireAuth, async (req, res) => {
@@ -184,6 +191,7 @@ app.delete('/api/admin/applications/:ref', requireAuth, async (req, res) => {
   });
   try { fs.rmSync(path.join(UPLOAD_ROOT, req.params.ref), { recursive: true, force: true }); } catch (e) {}
   res.json({ ok: true });
+  refreshExportSnapshot();
 });
 
 /* ------------------------------------------------------------------ */
@@ -202,32 +210,28 @@ app.get('/api/admin/applications/:ref/file/:kind', requireAuth, (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Admin: Excel export (multi-sheet, mirrors the applications' shape)   */
+/* Excel workbook builder — shared by the on-demand download AND the    */
+/* automatic snapshot-to-disk that fires on every change.               */
 /* ------------------------------------------------------------------ */
-app.get('/api/admin/export', requireAuth, async (req, res) => {
-  const data = db.read();
-  const list = data.applications.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+const LABEL_OVERRIDES = {
+  dob: 'Date of Birth', idType: 'ID Type', idNumber: 'ID/Passport No.',
+  idIssueDate: 'ID Issue Date', idExpiryDate: 'ID Expiry Date', idPlaceOfIssue: 'ID Place of Issue',
+  q_shifts: 'Willing to Work Shifts', q_car: 'Owns Car', q_license: 'Driving License',
+  q_relocate: 'Willing to Relocate', q_prevAsas: 'Previously Employed by ASAS',
+  q_govt: 'Employed by Iraqi Govt.', q_healthHistory: 'History of Illness/Surgery',
+  q_iraqIssue: 'Issue Working in Iraq', ref: 'Reference', cvReceived: 'CV Received',
+  emergName: 'Emergency Contact Name', emergRelation: 'Emergency Contact Relationship', emergPhone: 'Emergency Contact Phone'
+};
+function toLabel(key) {
+  if (LABEL_OVERRIDES[key]) return LABEL_OVERRIDES[key];
+  return key
+    .replace(/^q_/, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
 
-  // Turns a field name like 'candidateStatus' or 'q_shifts' into a readable
-  // Excel header like 'Candidate Status' or 'Shifts'.
-  const LABEL_OVERRIDES = {
-    dob: 'Date of Birth', idType: 'ID Type', idNumber: 'ID/Passport No.',
-    idIssueDate: 'ID Issue Date', idExpiryDate: 'ID Expiry Date', idPlaceOfIssue: 'ID Place of Issue',
-    q_shifts: 'Willing to Work Shifts', q_car: 'Owns Car', q_license: 'Driving License',
-    q_relocate: 'Willing to Relocate', q_prevAsas: 'Previously Employed by ASAS',
-    q_govt: 'Employed by Iraqi Govt.', q_healthHistory: 'History of Illness/Surgery',
-    q_iraqIssue: 'Issue Working in Iraq', ref: 'Reference', cvReceived: 'CV Received',
-    emergName: 'Emergency Contact Name', emergRelation: 'Emergency Contact Relationship', emergPhone: 'Emergency Contact Phone'
-  };
-  function toLabel(key) {
-    if (LABEL_OVERRIDES[key]) return LABEL_OVERRIDES[key];
-    return key
-      .replace(/^q_/, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, c => c.toUpperCase());
-  }
-
+function buildWorkbook(list) {
   const wb = new ExcelJS.Workbook();
 
   const appSheet = wb.addWorksheet('Applications');
@@ -274,6 +278,37 @@ app.get('/api/admin/export', requireAuth, async (req, res) => {
     if (r.name) relSheet.addRow([a.ref, a.fullName, r.name, r.relation, r.city]);
   }));
 
+  return wb;
+}
+
+// If EXPORT_PATH is set in .env, this rewrites that ONE file on disk every
+// time it's called — used right after every create/update/delete so the
+// file is always current with zero manual steps. Failures are logged but
+// never break the API response (a report-writing hiccup shouldn't fail
+// someone's application submission).
+const EXPORT_PATH = process.env.EXPORT_PATH || '';
+async function refreshExportSnapshot() {
+  if (!EXPORT_PATH) return;
+  try {
+    const data = db.read();
+    const list = data.applications.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+    const wb = buildWorkbook(list);
+    fs.mkdirSync(path.dirname(EXPORT_PATH), { recursive: true });
+    await wb.xlsx.writeFile(EXPORT_PATH);
+    console.log(`[auto-export] snapshot refreshed → ${EXPORT_PATH}`);
+  } catch (err) {
+    console.error('[auto-export] failed to refresh snapshot:', err.message);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin: Excel export (multi-sheet, mirrors the applications' shape)   */
+/* ------------------------------------------------------------------ */
+app.get('/api/admin/export', requireAuth, async (req, res) => {
+  const data = db.read();
+  const list = data.applications.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+  const wb = buildWorkbook(list);
+
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="ASAS-Applications-${new Date().toISOString().slice(0,10)}.xlsx"`);
   await wb.xlsx.write(res);
@@ -281,3 +316,4 @@ app.get('/api/admin/export', requireAuth, async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`ASAS Careers server running on port ${PORT}`));
+
