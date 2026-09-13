@@ -175,6 +175,8 @@ function openDetail(ref){
             <div class="field"><label>${lbl('Application Accepted','الطلب مقبول')}</label><select id="d_applicationAccepted"><option value=""></option>${['Yes','No'].map(o=>`<option ${a.applicationAccepted===o?'selected':''}>${o}</option>`).join('')}</select></div>
             <div class="field"><label>${lbl('Candidate Status','حالة المرشح')}</label><select id="d_candidateStatus"><option value=""></option>${['Interview','Shortlisted','Hold','Offer','Accepted','Notice','Join','Rejected'].map(o=>`<option ${a.candidateStatus===o?'selected':''}>${o}</option>`).join('')}</select></div>
           </div>
+          <div class="subhead">Employee Status</div>
+          <div class="field"><label>${lbl('Employee Status','حالة الموظف')}</label><select id="d_employeeStatus"><option value=""></option>${['Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined'].map(o=>`<option ${a.employeeStatus===o?'selected':''}>${o}</option>`).join('')}</select></div>
           <div class="subhead">Offer</div>
           <div class="row2">
             <div class="field"><label>${lbl('Offer Date','تاريخ العرض')}</label><input type="date" id="d_offerDate" value="${a.offerDate||''}"></div>
@@ -241,6 +243,7 @@ async function saveDetail(){
     cvReceived: document.getElementById('d_cvReceived').value,
     applicationAccepted: document.getElementById('d_applicationAccepted').value,
     candidateStatus: document.getElementById('d_candidateStatus').value,
+    employeeStatus: document.getElementById('d_employeeStatus').value,
     offerDate: document.getElementById('d_offerDate').value,
     offerStatus: document.getElementById('d_offerStatus').value,
     workPermitStatus: document.getElementById('d_workPermitStatus').value,
@@ -297,7 +300,7 @@ function printApplication(ref){
     <h3>Employment History</h3><table>${(a.jobs||[]).filter(j=>j.employer||j.position).map(j=>row(`${j.position||''} — ${j.employer||''}`,`${j.start||'?'} to ${j.end||'present'} · Net salary ${j.salary||'—'} ${j.currency||''} · Ref: ${j.refName||'—'}`)).join('') || row('Employment','—')}</table>
     <h3>Screening &amp; Health</h3><table>${row('Years of Experience',a.careerExperienceYears)}${row('Willing to Work Shifts',a.q_shifts)}${row('Issue Working in Iraq',a.q_iraqIssue + (a.iraqIssueDetail?': '+a.iraqIssueDetail:''))}${row('History of Illness/Surgery',a.q_healthHistory + (a.healthHistoryDetail?': '+a.healthHistoryDetail:''))}${row('Medically Fit',a.medicallyFit?'Yes':'No')}</table>
     <h3>For Office Use Only — HR</h3><table>${row('Status',a.status)}${row('Job Assigned Code',a.jobAssignedCode)}${row('Interview Date',a.interviewDate)}${row('Interview Result',a.interviewResult)}${row('Assessment Result',a.assessmentResult)}${row('Reviewer',a.reviewer)}${row('Notes',a.notes)}</table>
-    <h3>Offer &amp; Onboarding</h3><table>${row('CV Received',a.cvReceived)}${row('Application Accepted',a.applicationAccepted)}${row('Candidate Status',a.candidateStatus)}${row('Offer Date / Status',`${a.offerDate||'—'} / ${a.offerStatus||'—'}`)}${row('Work Permit Status',a.workPermitStatus)}${row('Visa / Travel Status',a.visaTravelStatus)}${row('Expected Join Date',a.expectedJoinDate)}${row('Join Date',a.joinDate)}${row('Net Salary (Offered)',(a.offeredSalary||'—')+' '+(a.offeredCurrency||''))}${row('Job Title (Final)',a.jobTitleFinal)}${row('Accommodation / Meals',`${a.accommodation||'—'} / ${a.meals||'—'} per day`)}</table>
+    <h3>Offer &amp; Onboarding</h3><table>${row('CV Received',a.cvReceived)}${row('Application Accepted',a.applicationAccepted)}${row('Candidate Status',a.candidateStatus)}${row('Employee Status',a.employeeStatus)}${row('Offer Date / Status',`${a.offerDate||'—'} / ${a.offerStatus||'—'}`)}${row('Work Permit Status',a.workPermitStatus)}${row('Visa / Travel Status',a.visaTravelStatus)}${row('Expected Join Date',a.expectedJoinDate)}${row('Join Date',a.joinDate)}${row('Net Salary (Offered)',(a.offeredSalary||'—')+' '+(a.offeredCurrency||''))}${row('Job Title (Final)',a.jobTitleFinal)}${row('Accommodation / Meals',`${a.accommodation||'—'} / ${a.meals||'—'} per day`)}</table>
     <div class="footer">Signature on file: ${a.signature||'—'} · Signed ${a.signDate||'—'} · Confidential — for internal HR use only.</div>
     </body></html>`);
   win.document.close();
