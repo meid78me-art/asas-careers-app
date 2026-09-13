@@ -3,6 +3,15 @@ let applications = [];
 let selectedApp = null;
 let filterText='', filterStatus='';
 
+// Pipeline stages, in order. Add/remove/reorder here and every dropdown,
+// filter, and count on this page updates automatically.
+const STATUS_OPTIONS = ['New','Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined','Rejected'];
+const STATUS_COLORS = {
+  New: '#6B7785', Interviewing: '#0EA9B7', Passed: '#3F8455', Offer: '#C98A2C',
+  Accepted: '#3F8455', Notice: '#8E6FCE', 'Visa process': '#C98A2C', Joined: '#1E7A44', Rejected: '#C0392B'
+};
+function statusColor(s){ return STATUS_COLORS[s] || '#6B7785'; }
+
 function lbl(en,ar){ return `<span class="lbl-en">${en}</span><span class="lbl-ar">${ar}</span>`; }
 
 async function api(path, opts){
@@ -52,22 +61,22 @@ async function loadAndRenderDashboard(){
 
 function renderAdminDashboard(){
   const el = document.getElementById('adminView');
-  const counts = {New:0,Shortlisted:0,Hold:0,Rejected:0};
-  applications.forEach(a=>counts[a.status] = (counts[a.status]||0)+1);
+  const counts = {};
+  applications.forEach(a=>{ const s = a.status || 'New'; counts[s] = (counts[s]||0)+1; });
+  const chips = STATUS_OPTIONS.filter(s => counts[s]).map(s =>
+    `<div class="chip"><b style="color:${statusColor(s)}">${counts[s]}</b>${s}</div>`
+  ).join('');
   el.innerHTML = `
     <div class="stat-chips">
       <div class="chip"><b>${applications.length}</b>Total</div>
-      <div class="chip"><b>${counts.New||0}</b>New</div>
-      <div class="chip"><b>${counts.Shortlisted||0}</b>Shortlisted</div>
-      <div class="chip"><b>${counts.Hold||0}</b>Hold</div>
-      <div class="chip"><b>${counts.Rejected||0}</b>Rejected</div>
+      ${chips}
       <button class="nav-btn" style="margin-left:auto;" onclick="logout()">Log Out</button>
     </div>
     <div class="admin-toolbar">
       <input type="text" id="searchBox" placeholder="Search name, position, ref, email…" value="${filterText}">
       <select id="statusFilter">
         <option value="">All statuses</option>
-        ${['New','Shortlisted','Hold','Rejected'].map(s=>`<option ${filterStatus===s?'selected':''}>${s}</option>`).join('')}
+        ${STATUS_OPTIONS.map(s=>`<option ${filterStatus===s?'selected':''}>${s}</option>`).join('')}
       </select>
       <a class="export-btn" href="#" onclick="downloadExport(); return false;">⬇ Download Excel</a>
     </div>
@@ -109,7 +118,7 @@ function renderTable(){
         <td>${a.ref}</td><td>${a.fullName}</td><td>${a.position}</td><td>${a.department}</td>
         <td>${a.candidateType==='expat'?'Expat':'Local'}</td>
         <td>${new Date(a.submittedAt).toLocaleDateString()}</td>
-        <td><span class="status-pill st-${a.status}">${a.status}</span></td>
+        <td><span class="status-pill" style="background:${statusColor(a.status)}">${a.status}</span></td>
       </tr>`).join('')}
   </table>`;
 }
@@ -153,7 +162,7 @@ function openDetail(ref){
           <b style="font-size:12px;">FOR OFFICE USE ONLY — HR</b>
           <div class="row2" style="margin-top:9px;">
             <div class="field"><label>${lbl('Status','الحالة')}</label>
-              <select id="d_status">${['New','Shortlisted','Hold','Rejected'].map(s=>`<option ${a.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+              <select id="d_status">${STATUS_OPTIONS.map(s=>`<option ${a.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
             <div class="field"><label>${lbl('Job Assigned Code','رمز الوظيفة المعيّنة')}</label><input type="text" id="d_jobAssignedCode" value="${a.jobAssignedCode||''}" placeholder="e.g. OPS-014"></div>
           </div>
           <div class="row2">
@@ -175,8 +184,6 @@ function openDetail(ref){
             <div class="field"><label>${lbl('Application Accepted','الطلب مقبول')}</label><select id="d_applicationAccepted"><option value=""></option>${['Yes','No'].map(o=>`<option ${a.applicationAccepted===o?'selected':''}>${o}</option>`).join('')}</select></div>
             <div class="field"><label>${lbl('Candidate Status','حالة المرشح')}</label><select id="d_candidateStatus"><option value=""></option>${['Interview','Shortlisted','Hold','Offer','Accepted','Notice','Join','Rejected'].map(o=>`<option ${a.candidateStatus===o?'selected':''}>${o}</option>`).join('')}</select></div>
           </div>
-          <div class="subhead">Employee Status</div>
-          <div class="field"><label>${lbl('Employee Status','حالة الموظف')}</label><select id="d_employeeStatus"><option value=""></option>${['Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined'].map(o=>`<option ${a.employeeStatus===o?'selected':''}>${o}</option>`).join('')}</select></div>
           <div class="subhead">Offer</div>
           <div class="row2">
             <div class="field"><label>${lbl('Offer Date','تاريخ العرض')}</label><input type="date" id="d_offerDate" value="${a.offerDate||''}"></div>
@@ -243,7 +250,6 @@ async function saveDetail(){
     cvReceived: document.getElementById('d_cvReceived').value,
     applicationAccepted: document.getElementById('d_applicationAccepted').value,
     candidateStatus: document.getElementById('d_candidateStatus').value,
-    employeeStatus: document.getElementById('d_employeeStatus').value,
     offerDate: document.getElementById('d_offerDate').value,
     offerStatus: document.getElementById('d_offerStatus').value,
     workPermitStatus: document.getElementById('d_workPermitStatus').value,
@@ -300,7 +306,7 @@ function printApplication(ref){
     <h3>Employment History</h3><table>${(a.jobs||[]).filter(j=>j.employer||j.position).map(j=>row(`${j.position||''} — ${j.employer||''}`,`${j.start||'?'} to ${j.end||'present'} · Net salary ${j.salary||'—'} ${j.currency||''} · Ref: ${j.refName||'—'}`)).join('') || row('Employment','—')}</table>
     <h3>Screening &amp; Health</h3><table>${row('Years of Experience',a.careerExperienceYears)}${row('Willing to Work Shifts',a.q_shifts)}${row('Issue Working in Iraq',a.q_iraqIssue + (a.iraqIssueDetail?': '+a.iraqIssueDetail:''))}${row('History of Illness/Surgery',a.q_healthHistory + (a.healthHistoryDetail?': '+a.healthHistoryDetail:''))}${row('Medically Fit',a.medicallyFit?'Yes':'No')}</table>
     <h3>For Office Use Only — HR</h3><table>${row('Status',a.status)}${row('Job Assigned Code',a.jobAssignedCode)}${row('Interview Date',a.interviewDate)}${row('Interview Result',a.interviewResult)}${row('Assessment Result',a.assessmentResult)}${row('Reviewer',a.reviewer)}${row('Notes',a.notes)}</table>
-    <h3>Offer &amp; Onboarding</h3><table>${row('CV Received',a.cvReceived)}${row('Application Accepted',a.applicationAccepted)}${row('Candidate Status',a.candidateStatus)}${row('Employee Status',a.employeeStatus)}${row('Offer Date / Status',`${a.offerDate||'—'} / ${a.offerStatus||'—'}`)}${row('Work Permit Status',a.workPermitStatus)}${row('Visa / Travel Status',a.visaTravelStatus)}${row('Expected Join Date',a.expectedJoinDate)}${row('Join Date',a.joinDate)}${row('Net Salary (Offered)',(a.offeredSalary||'—')+' '+(a.offeredCurrency||''))}${row('Job Title (Final)',a.jobTitleFinal)}${row('Accommodation / Meals',`${a.accommodation||'—'} / ${a.meals||'—'} per day`)}</table>
+    <h3>Offer &amp; Onboarding</h3><table>${row('CV Received',a.cvReceived)}${row('Application Accepted',a.applicationAccepted)}${row('Candidate Status',a.candidateStatus)}${row('Offer Date / Status',`${a.offerDate||'—'} / ${a.offerStatus||'—'}`)}${row('Work Permit Status',a.workPermitStatus)}${row('Visa / Travel Status',a.visaTravelStatus)}${row('Expected Join Date',a.expectedJoinDate)}${row('Join Date',a.joinDate)}${row('Net Salary (Offered)',(a.offeredSalary||'—')+' '+(a.offeredCurrency||''))}${row('Job Title (Final)',a.jobTitleFinal)}${row('Accommodation / Meals',`${a.accommodation||'—'} / ${a.meals||'—'} per day`)}</table>
     <div class="footer">Signature on file: ${a.signature||'—'} · Signed ${a.signDate||'—'} · Confidential — for internal HR use only.</div>
     </body></html>`);
   win.document.close();
