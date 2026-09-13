@@ -114,7 +114,7 @@ app.post(
         signature: b.signature || '', signDate: b.signDate || '',
         status: 'New', jobAssignedCode: '', interviewDate: '', interviewResult: '',
         assessmentResult: '', reviewer: '', notes: '',
-        cvReceived: 'Yes', applicationAccepted: '', candidateStatus: '', employeeStatus: '',
+        cvReceived: 'Yes', applicationAccepted: '', candidateStatus: '',
         offerDate: '', offerStatus: '',
         workPermitStatus: '', visaTravelStatus: '',
         expectedJoinDate: '', joinDate: '', offeredSalary: '', offeredCurrency: '',
@@ -166,7 +166,7 @@ app.get('/api/admin/applications/:ref', requireAuth, (req, res) => {
 app.patch('/api/admin/applications/:ref', requireAuth, async (req, res) => {
   const allowed = [
     'status', 'jobAssignedCode', 'interviewDate', 'interviewResult', 'assessmentResult', 'reviewer', 'notes',
-    'cvReceived', 'applicationAccepted', 'candidateStatus', 'employeeStatus',
+    'cvReceived', 'applicationAccepted', 'candidateStatus',
     'offerDate', 'offerStatus',
     'workPermitStatus', 'visaTravelStatus',
     'expectedJoinDate', 'joinDate', 'offeredSalary', 'offeredCurrency', 'accommodation', 'meals', 'jobTitleFinal'
@@ -246,7 +246,7 @@ function buildWorkbook(list) {
     'careerExperienceYears', 'q_healthHistory', 'healthHistoryDetail', 'q_iraqIssue', 'iraqIssueDetail',
     'q_shifts', 'q_car', 'q_license', 'q_relocate', 'q_prevAsas', 'q_govt',
     'jobAssignedCode', 'interviewDate', 'interviewResult', 'assessmentResult', 'reviewer', 'notes',
-    'cvReceived', 'applicationAccepted', 'candidateStatus', 'employeeStatus', 'offerDate', 'offerStatus',
+    'cvReceived', 'applicationAccepted', 'candidateStatus', 'offerDate', 'offerStatus',
     'workPermitStatus', 'visaTravelStatus', 'expectedJoinDate', 'joinDate',
     'offeredSalary', 'offeredCurrency', 'accommodation', 'meals', 'jobTitleFinal'
   ];
