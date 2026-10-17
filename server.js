@@ -6,7 +6,7 @@ const fs = require('fs');
 const ExcelJS = require('exceljs');
 
 const db = require('./lib/db');
-const { checkPassword, issueToken, requireAuth } = require('./lib/auth');
+const { checkPassword, issueToken, requireAuth, requireExportAccess } = require('./lib/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -143,9 +143,10 @@ app.post(
 /* Admin: auth                                                          */
 /* ------------------------------------------------------------------ */
 app.post('/api/admin/login', (req, res) => {
-  const { password } = req.body || {};
-  if (!checkPassword(password)) return res.status(401).json({ error: 'Incorrect password' });
-  res.json({ token: issueToken() });
+  const { password, scope } = req.body || {};
+  const role = checkPassword(password, scope);
+  if (!role) return res.status(401).json({ error: 'Incorrect password' });
+  res.json({ token: issueToken(role), role });
 });
 
 /* ------------------------------------------------------------------ */
@@ -304,7 +305,7 @@ async function refreshExportSnapshot() {
 /* ------------------------------------------------------------------ */
 /* Admin: Excel export (multi-sheet, mirrors the applications' shape)   */
 /* ------------------------------------------------------------------ */
-app.get('/api/admin/export', requireAuth, async (req, res) => {
+app.get('/api/admin/export', requireExportAccess, async (req, res) => {
   const data = db.read();
   const list = data.applications.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
   const wb = buildWorkbook(list);
