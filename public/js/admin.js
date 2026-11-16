@@ -2,13 +2,15 @@ let authToken = sessionStorage.getItem('asas_admin_token') || null;
 let applications = [];
 let selectedApp = null;
 let filterText='', filterStatus='';
+let view = 'list';            // 'list' (applications table) or 'analysis' (report)
+let anFrom = '', anTo = '';   // analysis report date range (YYYY-MM-DD)
 
 // Pipeline stages, in order. Add/remove/reorder here and every dropdown,
 // filter, and count on this page updates automatically.
-const STATUS_OPTIONS = ['New','Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined','Rejected'];
+const STATUS_OPTIONS = ['New','Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined','Hold','Rejected'];
 const STATUS_COLORS = {
   New: '#6B7785', Interviewing: '#0EA9B7', Passed: '#3F8455', Offer: '#C98A2C',
-  Accepted: '#3F8455', Notice: '#8E6FCE', 'Visa process': '#C98A2C', Joined: '#1E7A44', Rejected: '#C0392B'
+  Accepted: '#3F8455', Notice: '#8E6FCE', 'Visa process': '#C98A2C', Joined: '#1E7A44', Hold: '#D35400', Rejected: '#C0392B'
 };
 function statusColor(s){ return STATUS_COLORS[s] || '#6B7785'; }
 
@@ -66,12 +68,23 @@ function renderAdminDashboard(){
   const chips = STATUS_OPTIONS.filter(s => counts[s]).map(s =>
     `<div class="chip"><b style="color:${statusColor(s)}">${counts[s]}</b>${s}</div>`
   ).join('');
-  el.innerHTML = `
+  el.classList.toggle('wide', view === 'analysis');
+  const head = `
     <div class="stat-chips">
       <div class="chip"><b>${applications.length}</b>Total</div>
       ${chips}
       <button class="nav-btn" style="margin-left:auto;" onclick="logout()">Log Out</button>
     </div>
+    <div class="toggle-row">
+      <button class="${view==='list'?'active':''}" onclick="setView('list')">Applications</button>
+      <button class="${view==='analysis'?'active':''}" onclick="setView('analysis')">Analysis Report</button>
+    </div>`;
+  if(view === 'analysis'){
+    el.innerHTML = head + `<div id="analysisHolder"></div>`;
+    renderAnalysis();
+    return;
+  }
+  el.innerHTML = head + `
     <div class="admin-toolbar">
       <input type="text" id="searchBox" placeholder="Search name, position, ref, email…" value="${filterText}">
       <select id="statusFilter">
@@ -273,6 +286,272 @@ async function deleteApp(){
   await api(`/api/admin/applications/${selectedApp.ref}`, { method:'DELETE' });
   closeDetail();
   loadAndRenderDashboard();
+}
+
+/* ---------- Analysis report ----------
+   Everything here is calculated in the browser from the same
+   /api/admin/applications data the table uses. No server changes needed. */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function pct(n,t){ return t ? Math.round(n*1000/t)/10 : 0; }
+function setView(v){ view = v; renderAdminDashboard(); }
+
+const STAGE_INTERVIEW = ['Interviewing','Passed','Offer','Accepted','Notice','Visa process','Joined'];
+const STAGE_OFFER     = ['Offer','Accepted','Notice','Visa process','Joined'];
+const STAGE_ACCEPTED  = ['Accepted','Notice','Visa process','Joined'];
+
+function analysisList(){
+  return applications.filter(a=>{
+    const d = (a.submittedAt||'').slice(0,10);
+    if(anFrom && d < anFrom) return false;
+    if(anTo && d > anTo) return false;
+    return true;
+  });
+}
+
+// Count by a field; same text in different letter-case is grouped together.
+function tally(list, fn, limit){
+  const m = new Map();
+  list.forEach(a=>{
+    const v = fn(a);
+    const raw = String(v==null?'':v).trim();
+    const key = raw ? raw.toLowerCase() : '(not specified)';
+    const e = m.get(key) || { label: raw || '(not specified)', n: 0 };
+    e.n++; m.set(key, e);
+  });
+  let arr = [...m.values()].sort((a,b)=> b.n-a.n || a.label.localeCompare(b.label));
+  if(limit && arr.length > limit){
+    const rest = arr.slice(limit).reduce((s,e)=>s+e.n,0);
+    arr = arr.slice(0,limit).concat([{ label:'Other', n: rest }]);
+  }
+  return arr;
+}
+
+function computeAnalysis(list){
+  const total = list.length;
+  const st = a => a.status || 'New';
+
+  const sc = {};
+  list.forEach(a=>{ sc[st(a)] = (sc[st(a)]||0)+1; });
+  const statusRows = STATUS_OPTIONS.concat(Object.keys(sc).filter(s=>!STATUS_OPTIONS.includes(s)))
+    .filter(s=>sc[s]).map(s=>({ label:s, n:sc[s], color:statusColor(s) }));
+
+  const funnel = [
+    { label:'Applications received', n: total },
+    { label:'Reached interview',     n: list.filter(a=> a.interviewDate || STAGE_INTERVIEW.includes(st(a))).length },
+    { label:'Offer made',            n: list.filter(a=> a.offerDate || a.offerStatus || STAGE_OFFER.includes(st(a))).length },
+    { label:'Offer accepted',        n: list.filter(a=> a.offerStatus==='Accepted' || STAGE_ACCEPTED.includes(st(a))).length },
+    { label:'Joined',                n: list.filter(a=> st(a)==='Joined' || a.joinDate).length }
+  ];
+
+  // Applications per month (last 12 months that have data, gaps filled with 0)
+  const mc = {};
+  list.forEach(a=>{ const k=(a.submittedAt||'').slice(0,7); if(k) mc[k]=(mc[k]||0)+1; });
+  let months = [];
+  const keys = Object.keys(mc).sort();
+  if(keys.length){
+    let [y,m] = keys[0].split('-').map(Number);
+    const [ey,em] = keys[keys.length-1].split('-').map(Number);
+    while(y<ey || (y===ey && m<=em)){
+      const k = y+'-'+String(m).padStart(2,'0');
+      months.push({ label:k, n: mc[k]||0 });
+      m++; if(m>12){ m=1; y++; }
+    }
+  }
+  months = months.slice(-12);
+
+  // Average days from submission to a later milestone
+  const avgDays = f => {
+    const v = [];
+    list.forEach(a=>{
+      if(!a[f] || !a.submittedAt) return;
+      const d = (new Date(a[f]) - new Date(a.submittedAt)) / 864e5;
+      if(isFinite(d) && d > -1) v.push(Math.max(0,d));
+    });
+    return v.length ? { avg: v.reduce((s,x)=>s+x,0)/v.length, n: v.length } : null;
+  };
+
+  // Everything marked Hold anywhere (main status, interview result, candidate status)
+  const holdRows = list
+    .filter(a=> st(a)==='Hold' || a.interviewResult==='Hold' || a.candidateStatus==='Hold')
+    .map(a=>({
+      a,
+      where: [st(a)==='Hold' && 'Status', a.interviewResult==='Hold' && 'Interview result', a.candidateStatus==='Hold' && 'Candidate status'].filter(Boolean).join(', '),
+      days: Math.max(0, Math.floor((Date.now() - new Date(a.submittedAt)) / 864e5))
+    }))
+    .sort((x,y)=> y.days - x.days);
+
+  return {
+    total,
+    kpis: {
+      active:   list.filter(a=> !['Joined','Rejected','Hold'].includes(st(a))).length,
+      hold:     sc['Hold']||0,
+      joined:   sc['Joined']||0,
+      rejected: sc['Rejected']||0
+    },
+    statusRows, funnel, months, holdRows,
+    positions:   tally(list, a=>a.position, 10),
+    departments: tally(list, a=>a.department, 10),
+    locations:   tally(list, a=>a.location, 10),
+    types:       tally(list, a=>a.candidateType==='expat' ? 'Expat' : 'Local'),
+    sources:     tally(list, a=>a.sourceOfVacancy, 8),
+    interviewResults: tally(list.filter(a=>a.interviewResult), a=>a.interviewResult),
+    offerStatuses:    tally(list.filter(a=>a.offerStatus), a=>a.offerStatus),
+    toInterview: avgDays('interviewDate'),
+    toOffer:     avgDays('offerDate'),
+    toJoin:      avgDays('joinDate')
+  };
+}
+
+function barRows(rows, total){
+  if(!rows.length) return `<div class="an-empty">No data</div>`;
+  const max = Math.max(1, ...rows.map(r=>r.n));
+  return rows.map(r=>`
+    <div class="bar-row">
+      <div class="bar-label" title="${esc(r.label)}">${esc(r.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(r.n/max*100).toFixed(1)}%; background:${r.color||'var(--teal)'}"></div></div>
+      <div class="bar-val">${r.n}<span>${pct(r.n,total)}%</span></div>
+    </div>`).join('');
+}
+
+function daysText(x){ return x ? `${x.avg.toFixed(1)} days <span class="an-note">(${x.n} candidate${x.n===1?'':'s'})</span>` : '—'; }
+
+function reportHtml(r){
+  const T = r.total;
+  const rangeTxt = (anFrom||anTo) ? `${anFrom||'start'} → ${anTo||'today'}` : 'All time';
+  const maxM = Math.max(1, ...r.months.map(m=>m.n));
+  const monthsHtml = r.months.length ? `<div class="month-chart">${r.months.map(m=>`
+      <div class="month-col"><div class="month-n">${m.n}</div>
+        <div class="month-bar" style="height:${Math.max(3, m.n/maxM*100)}%"></div>
+        <div class="month-l">${esc(m.label.slice(2).replace('-','/'))}</div></div>`).join('')}</div>` : `<div class="an-empty">No data</div>`;
+  const kpi = (n,l,c)=>`<div class="kpi"><b style="color:${c||'var(--teal)'}">${n}</b><span>${l}</span></div>`;
+
+  const holdHtml = r.holdRows.length ? `
+    <table class="appl"><tr><th>Ref</th><th>Name</th><th>Position</th><th>Held in</th><th>Days since submitted</th><th>Notes</th></tr>
+    ${r.holdRows.map(h=>`<tr onclick="openDetail('${esc(h.a.ref)}')">
+      <td>${esc(h.a.ref)}</td><td>${esc(h.a.fullName)}</td><td>${esc(h.a.position)}</td>
+      <td>${esc(h.where)}</td><td>${h.days}</td><td>${esc((h.a.notes||'').slice(0,60))}</td></tr>`).join('')}
+    </table>` : `<div class="an-empty">No applications on hold.</div>`;
+
+  return `
+    <div class="an-title">Applications analysis <span class="an-note">· ${esc(rangeTxt)} · generated ${new Date().toLocaleDateString()}</span></div>
+    <div class="kpis">
+      ${kpi(T,'Total applications')}
+      ${kpi(r.kpis.active,'Active in pipeline')}
+      ${kpi(r.kpis.hold,'On Hold', statusColor('Hold'))}
+      ${kpi(r.kpis.joined,'Joined', statusColor('Joined'))}
+      ${kpi(r.kpis.rejected,'Rejected', statusColor('Rejected'))}
+    </div>
+    <div class="an-grid">
+      <div class="an-card"><h4>Applications by status</h4>${barRows(r.statusRows, T)}</div>
+      <div class="an-card"><h4>Hiring funnel <span class="an-note">(% of all applications)</span></h4>${barRows(r.funnel, T)}</div>
+      <div class="an-card full"><h4>Applications per month</h4>${monthsHtml}</div>
+      <div class="an-card"><h4>Top positions</h4>${barRows(r.positions, T)}</div>
+      <div class="an-card"><h4>Departments</h4>${barRows(r.departments, T)}</div>
+      <div class="an-card"><h4>Locations</h4>${barRows(r.locations, T)}</div>
+      <div class="an-card"><h4>Local vs expat</h4>${barRows(r.types, T)}</div>
+      <div class="an-card"><h4>Source of vacancy</h4>${barRows(r.sources, T)}</div>
+      <div class="an-card"><h4>Interview results</h4>${barRows(r.interviewResults, T)}</div>
+      <div class="an-card"><h4>Offer status</h4>${barRows(r.offerStatuses, T)}</div>
+      <div class="an-card"><h4>Average time to hire</h4>
+        <div class="time-row"><span>Application → interview</span><b>${daysText(r.toInterview)}</b></div>
+        <div class="time-row"><span>Application → offer</span><b>${daysText(r.toOffer)}</b></div>
+        <div class="time-row"><span>Application → joined</span><b>${daysText(r.toJoin)}</b></div>
+      </div>
+      <div class="an-card full"><h4>On hold <span class="an-note">(Hold in status, interview result or candidate status)</span></h4>${holdHtml}</div>
+    </div>`;
+}
+
+function renderAnalysis(){
+  const holder = document.getElementById('analysisHolder');
+  if(!holder) return;
+  holder.innerHTML = `
+    <div class="an-controls no-print">
+      <label>From <input type="date" id="anFrom" value="${esc(anFrom)}"></label>
+      <label>To <input type="date" id="anTo" value="${esc(anTo)}"></label>
+      <button class="nav-btn" onclick="setRange('30')">Last 30 days</button>
+      <button class="nav-btn" onclick="setRange('90')">Last 90 days</button>
+      <button class="nav-btn" onclick="setRange('year')">This year</button>
+      <button class="nav-btn" onclick="setRange('all')">All time</button>
+      <span style="flex:1"></span>
+      <button class="nav-btn" onclick="downloadReportCsv()">⬇ CSV</button>
+      <button class="nav-btn" onclick="printReport()">🖨 Print / Save as PDF</button>
+    </div>
+    <div id="reportBody"></div>`;
+  document.getElementById('anFrom').addEventListener('change', e=>{ anFrom = e.target.value; updateReport(); });
+  document.getElementById('anTo').addEventListener('change', e=>{ anTo = e.target.value; updateReport(); });
+  updateReport();
+}
+
+function updateReport(){
+  const body = document.getElementById('reportBody');
+  if(body) body.innerHTML = reportHtml(computeAnalysis(analysisList()));
+}
+
+function setRange(kind){
+  const iso = d => d.toISOString().slice(0,10);
+  const now = new Date();
+  anFrom = ''; anTo = '';
+  if(kind==='30' || kind==='90'){ const f = new Date(now); f.setDate(f.getDate() - Number(kind)); anFrom = iso(f); }
+  if(kind==='year'){ anFrom = now.getFullYear() + '-01-01'; }
+  document.getElementById('anFrom').value = anFrom;
+  document.getElementById('anTo').value = anTo;
+  updateReport();
+}
+
+function csvCell(v){
+  let s = String(v==null?'':v);
+  if(/^[=+\-@\t\r]/.test(s)) s = "'" + s;          // stop spreadsheet formula injection
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+function downloadReportCsv(){
+  const r = computeAnalysis(analysisList());
+  const T = r.total;
+  const rows = [['Section','Item','Count','% of total']];
+  const add = (sec, list) => list.forEach(x => rows.push([sec, x.label, x.n, pct(x.n,T)]));
+  rows.push(['Summary','Total applications',T,100]);
+  rows.push(['Summary','Active in pipeline',r.kpis.active,pct(r.kpis.active,T)]);
+  add('Status', r.statusRows);
+  add('Funnel', r.funnel);
+  add('Per month', r.months);
+  add('Position', r.positions);
+  add('Department', r.departments);
+  add('Location', r.locations);
+  add('Local vs expat', r.types);
+  add('Source of vacancy', r.sources);
+  add('Interview result', r.interviewResults);
+  add('Offer status', r.offerStatuses);
+  [['Avg days: application → interview', r.toInterview],['Avg days: application → offer', r.toOffer],['Avg days: application → joined', r.toJoin]]
+    .forEach(([l,x]) => rows.push(['Time to hire', l, x ? x.avg.toFixed(1) : '', x ? 'n=' + x.n : '']));
+  r.holdRows.forEach(h => rows.push(['On hold', `${h.a.ref} — ${h.a.fullName} — ${h.a.position}`, h.days + ' days', h.where]));
+  const csv = '﻿' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type:'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `ASAS-Applications-Analysis-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function printReport(){
+  const body = document.getElementById('reportBody');
+  if(!body) return;
+  const win = window.open('', '_blank');
+  if(!win){ alert('Please allow pop-ups for this site to print the report.'); return; }
+  win.document.write(`
+    <html><head><title>ASAS — Applications Analysis</title>
+    <link rel="stylesheet" href="${location.origin}/css/style.css">
+    <style>
+      body{background:#fff; padding:24px;}
+      .ph{display:flex; align-items:center; gap:14px; border-bottom:3px solid #0EA9B7; padding-bottom:12px; margin-bottom:16px;}
+      .ph img{height:40px;} .ph .t1{font-size:18px; font-weight:700;}
+      table.appl tr{cursor:default;}
+      @media print{ body{padding:8px;} .an-card{break-inside:avoid;} }
+    </style></head><body>
+    <div class="ph"><img src="${location.origin}/assets/logo.png"><div class="t1">ASAS Global Aluminum Extrusion — HR Portal</div></div>
+    ${body.innerHTML}
+    <div style="margin-top:20px; font-size:10px; color:#888; border-top:1px solid #ddd; padding-top:8px;">Confidential — for internal HR use only.</div>
+    </body></html>`);
+  win.document.close();
+  win.onload = () => win.print();
 }
 
 /* ---------- Print / Save as PDF ---------- */
